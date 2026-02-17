@@ -275,7 +275,6 @@ Contributions are welcome! Please submit pull requests or open issues for:
 
 For questions, issues, or feature requests:
 - Open an issue on GitHub
-- Contact: your-email@example.com
 
 ---
 

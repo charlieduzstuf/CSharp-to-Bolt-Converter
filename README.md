@@ -290,6 +290,8 @@ This tool was developed based on research from:
 - Unity 2021.1+ (built-in Visual Scripting)
 - Unity 2019/2020 LTS with Bolt Asset Store package
 - Visual Scripting package 1.5+
+- Python 3.7+ required to run the converter
+- Compatible with C# versions 4-9 (Unity 5 through Unity 2023+)
 
 ## License
 

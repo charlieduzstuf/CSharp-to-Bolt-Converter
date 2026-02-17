@@ -63,6 +63,7 @@ class Node:
     ports: List[Port] = field(default_factory=list)
     default_values: Dict[str, Any] = field(default_factory=dict)
     member_info: Optional[Dict] = None
+    description: Optional[str] = None
 
     def to_dict(self) -> Dict:
         result = {
@@ -76,6 +77,9 @@ class Node:
             },
             "defaultValues": self.default_values
         }
+
+        if self.description:
+            result["summary"] = self.description
 
         if self.member_info:
             result["member"] = self.member_info
@@ -194,6 +198,12 @@ class CSharpParser:
 
             start_pos = match.end() - 1
             body = self._extract_body(start_pos)
+            
+            # Check if it's a coroutine
+            is_coroutine = "IEnumerator" in return_type
+
+            # Extract comments from method
+            comments = self._extract_method_comments(match.start())
 
             self.methods.append({
                 "access": access,
@@ -203,8 +213,25 @@ class CSharpParser:
                 "return_type": return_type,
                 "name": method_name,
                 "parameters": parameters,
-                "body": body
+                "body": body,
+                "is_coroutine": is_coroutine,
+                "comments": comments
             })
+
+    def _extract_method_comments(self, method_pos: int) -> str:
+        """Extract comments before a method"""
+        # Look backwards for comments
+        lines_before = self.code[:method_pos].split('\n')
+        comments = []
+        for line in reversed(lines_before[-5:]):  # Check last 5 lines
+            line = line.strip()
+            if line.startswith('//'):
+                comments.insert(0, line[2:].strip())
+            elif line.startswith('/*') or line.startswith('*'):
+                comments.insert(0, line.lstrip('/*').rstrip('*/').strip())
+            elif line and not line.startswith('['):  # Stop at non-comment, non-attribute
+                break
+        return ' '.join(comments) if comments else ""
 
     def _extract_body(self, start_pos: int) -> str:
         depth = 0
@@ -350,6 +377,193 @@ class VisualScriptingGenerator:
             ]
         )
 
+    def _create_for_node(self) -> Node:
+        """Create a For loop node"""
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.For",
+            position=self._next_position(),
+            category=NodeType.FLOW,
+            ports=[
+                Port("enter", PortType.CONTROL_INPUT),
+                Port("firstIndex", PortType.VALUE_INPUT, "System.Int32"),
+                Port("lastIndex", PortType.VALUE_INPUT, "System.Int32"),
+                Port("step", PortType.VALUE_INPUT, "System.Int32"),
+                Port("body", PortType.CONTROL_OUTPUT),
+                Port("exit", PortType.CONTROL_OUTPUT),
+                Port("currentIndex", PortType.VALUE_OUTPUT, "System.Int32")
+            ]
+        )
+
+    def _create_while_node(self) -> Node:
+        """Create a While loop node"""
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.While",
+            position=self._next_position(),
+            category=NodeType.FLOW,
+            ports=[
+                Port("enter", PortType.CONTROL_INPUT),
+                Port("condition", PortType.VALUE_INPUT, "System.Boolean"),
+                Port("body", PortType.CONTROL_OUTPUT),
+                Port("exit", PortType.CONTROL_OUTPUT)
+            ]
+        )
+
+    def _create_foreach_node(self, collection_type: str = "System.Collections.IEnumerable") -> Node:
+        """Create a ForEach loop node"""
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.ForEach",
+            position=self._next_position(),
+            category=NodeType.FLOW,
+            ports=[
+                Port("enter", PortType.CONTROL_INPUT),
+                Port("collection", PortType.VALUE_INPUT, collection_type),
+                Port("body", PortType.CONTROL_OUTPUT),
+                Port("exit", PortType.CONTROL_OUTPUT),
+                Port("currentItem", PortType.VALUE_OUTPUT, "System.Object")
+            ]
+        )
+
+    def _create_switch_node(self, num_cases: int = 2) -> Node:
+        """Create a Switch node"""
+        ports = [
+            Port("enter", PortType.CONTROL_INPUT),
+            Port("selector", PortType.VALUE_INPUT, "System.Int32")
+        ]
+        
+        for i in range(num_cases):
+            ports.append(Port(str(i), PortType.CONTROL_OUTPUT))
+        
+        ports.append(Port("default", PortType.CONTROL_OUTPUT))
+        
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.SwitchOnInteger",
+            position=self._next_position(),
+            category=NodeType.FLOW,
+            ports=ports
+        )
+
+    def _create_arithmetic_node(self, operation: str) -> Node:
+        """Create an arithmetic operation node"""
+        operation_map = {
+            "+": ("Unity.VisualScripting.GenericAdd", "Add"),
+            "-": ("Unity.VisualScripting.GenericSubtract", "Subtract"),
+            "*": ("Unity.VisualScripting.GenericMultiply", "Multiply"),
+            "/": ("Unity.VisualScripting.GenericDivide", "Divide"),
+            "%": ("Unity.VisualScripting.GenericModulo", "Modulo")
+        }
+        
+        node_type, op_name = operation_map.get(operation, ("Unity.VisualScripting.GenericAdd", "Add"))
+        
+        return Node(
+            guid=self._new_guid(),
+            node_type=node_type,
+            position=self._next_position(),
+            category=NodeType.OPERATOR,
+            ports=[
+                Port("a", PortType.VALUE_INPUT, "System.Object"),
+                Port("b", PortType.VALUE_INPUT, "System.Object"),
+                Port("result", PortType.VALUE_OUTPUT, "System.Object")
+            ]
+        )
+
+    def _create_comparison_node(self, operation: str) -> Node:
+        """Create a comparison operation node"""
+        operation_map = {
+            "==": "Unity.VisualScripting.GenericEqual",
+            "!=": "Unity.VisualScripting.GenericNotEqual",
+            "<": "Unity.VisualScripting.GenericLess",
+            ">": "Unity.VisualScripting.GenericGreater",
+            "<=": "Unity.VisualScripting.GenericLessOrEqual",
+            ">=": "Unity.VisualScripting.GenericGreaterOrEqual"
+        }
+        
+        node_type = operation_map.get(operation, "Unity.VisualScripting.GenericEqual")
+        
+        return Node(
+            guid=self._new_guid(),
+            node_type=node_type,
+            position=self._next_position(),
+            category=NodeType.OPERATOR,
+            ports=[
+                Port("a", PortType.VALUE_INPUT, "System.Object"),
+                Port("b", PortType.VALUE_INPUT, "System.Object"),
+                Port("result", PortType.VALUE_OUTPUT, "System.Boolean")
+            ]
+        )
+
+    def _create_yield_return_node(self) -> Node:
+        """Create a yield return node for coroutines"""
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.YieldReturn",
+            position=self._next_position(),
+            category=NodeType.FLOW,
+            ports=[
+                Port("enter", PortType.CONTROL_INPUT),
+                Port("exit", PortType.CONTROL_OUTPUT),
+                Port("instruction", PortType.VALUE_INPUT, "UnityEngine.YieldInstruction")
+            ]
+        )
+
+    def _create_wait_for_seconds_node(self, seconds: float = 1.0) -> Node:
+        """Create a WaitForSeconds node"""
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.WaitForSeconds",
+            position=self._next_position(),
+            category=NodeType.DATA,
+            ports=[
+                Port("seconds", PortType.VALUE_INPUT, "System.Single"),
+                Port("result", PortType.VALUE_OUTPUT, "UnityEngine.WaitForSeconds")
+            ],
+            default_values={"seconds": seconds}
+        )
+
+    def _create_custom_invoke_node(self, method_name: str, target_type: str,
+                                   parameters: List[Dict], return_type: Optional[str] = None,
+                                   is_static: bool = False) -> Node:
+        """Create a node for custom method invocation"""
+        param_types = [self.TYPE_MAPPINGS.get(p["type"], p["type"]) for p in parameters]
+        param_names = [p["name"] for p in parameters]
+
+        member_info = {
+            "name": method_name,
+            "parameterTypes": param_types,
+            "targetType": target_type,
+            "targetTypeName": target_type,
+            "parameterNames": param_names,
+            "$version": "A"
+        }
+
+        ports = [
+            Port("enter", PortType.CONTROL_INPUT),
+            Port("exit", PortType.CONTROL_OUTPUT)
+        ]
+
+        if not is_static:
+            ports.append(Port("target", PortType.VALUE_INPUT, target_type))
+
+        for i, param in enumerate(parameters):
+            mapped_type = self.TYPE_MAPPINGS.get(param["type"], param["type"])
+            ports.append(Port(f"%{param['name']}", PortType.VALUE_INPUT, mapped_type))
+
+        if return_type and return_type != "void":
+            mapped_return = self.TYPE_MAPPINGS.get(return_type, return_type)
+            ports.append(Port("result", PortType.VALUE_OUTPUT, mapped_return))
+
+        return Node(
+            guid=self._new_guid(),
+            node_type="Unity.VisualScripting.InvokeMember",
+            position=self._next_position(),
+            category=NodeType.INVOKE,
+            ports=ports,
+            member_info=member_info
+        )
+
     def _create_set_variable_node(self, var_name: str, var_type: str) -> Node:
         return Node(
             guid=self._new_guid(),
@@ -434,14 +648,110 @@ class VisualScriptingGenerator:
     def _process_method(self, method: Dict) -> Tuple[List[Node], List[Connection]]:
         nodes = []
         connections = []
+        last_node = None
 
         event_node = None
         if method["name"] in self.UNITY_EVENTS:
             event_node = self._create_event_node(method["name"])
             nodes.append(event_node)
+            last_node = event_node
 
         body = method["body"]
 
+        # Process for loops
+        for_pattern = r'for\s*\(\s*(?:int|var)\s+(\w+)\s*=\s*([^;]+);\s*\1\s*([<>]=?)\s*([^;]+);\s*\1\s*(\+\+|--|\+=\s*\d+|-=\s*\d+)\s*\)'
+        for match in re.finditer(for_pattern, body):
+            var_name = match.group(1)
+            start_val = match.group(2).strip()
+            operator = match.group(3)
+            end_val = match.group(4).strip()
+            increment = match.group(5).strip()
+            
+            for_node = self._create_for_node()
+            nodes.append(for_node)
+            
+            # Create literal nodes for start and end values
+            start_literal = self._create_literal_node(int(start_val) if start_val.isdigit() else 0, "int")
+            nodes.append(start_literal)
+            
+            end_literal = self._create_literal_node(int(end_val) if end_val.isdigit() else 10, "int")
+            nodes.append(end_literal)
+            
+            # Connect event to for loop
+            if last_node:
+                conn = self._create_connection(
+                    last_node, "trigger" if last_node == event_node else "exit",
+                    for_node, "enter"
+                )
+                connections.append(conn)
+                
+            # Connect literals to for loop
+            conn = self._create_connection(start_literal, "output", for_node, "%firstIndex", is_control=False)
+            connections.append(conn)
+            conn = self._create_connection(end_literal, "output", for_node, "%lastIndex", is_control=False)
+            connections.append(conn)
+            
+            last_node = for_node
+
+        # Process while loops
+        while_pattern = r'while\s*\(([^)]+)\)'
+        for match in re.finditer(while_pattern, body):
+            condition = match.group(1).strip()
+            
+            while_node = self._create_while_node()
+            nodes.append(while_node)
+            
+            if last_node:
+                conn = self._create_connection(
+                    last_node, "trigger" if last_node == event_node else "exit",
+                    while_node, "enter"
+                )
+                connections.append(conn)
+            
+            last_node = while_node
+
+        # Process foreach loops
+        foreach_pattern = r'foreach\s*\(\s*(?:var|(\w+))\s+(\w+)\s+in\s+([^)]+)\)'
+        for match in re.finditer(foreach_pattern, body):
+            item_type = match.group(1) or "var"
+            item_name = match.group(2)
+            collection = match.group(3).strip()
+            
+            foreach_node = self._create_foreach_node()
+            nodes.append(foreach_node)
+            
+            if last_node:
+                conn = self._create_connection(
+                    last_node, "trigger" if last_node == event_node else "exit",
+                    foreach_node, "enter"
+                )
+                connections.append(conn)
+            
+            last_node = foreach_node
+
+        # Process switch statements
+        switch_pattern = r'switch\s*\(([^)]+)\)\s*\{'
+        for match in re.finditer(switch_pattern, body):
+            selector = match.group(1).strip()
+            
+            # Count cases
+            switch_start = match.end()
+            switch_body = self._extract_switch_body(body, switch_start)
+            num_cases = len(re.findall(r'case\s+\d+:', switch_body))
+            
+            switch_node = self._create_switch_node(num_cases)
+            nodes.append(switch_node)
+            
+            if last_node:
+                conn = self._create_connection(
+                    last_node, "trigger" if last_node == event_node else "exit",
+                    switch_node, "enter"
+                )
+                connections.append(conn)
+            
+            last_node = switch_node
+
+        # Process Debug.Log calls
         debug_log_pattern = r'Debug\.Log\s*\(([^)]+)\)'
         for match in re.finditer(debug_log_pattern, body):
             log_arg = match.group(1).strip()
@@ -453,9 +763,9 @@ class VisualScriptingGenerator:
             )
             nodes.append(debug_node)
 
-            if event_node:
+            if last_node:
                 conn = self._create_connection(
-                    event_node, "trigger",
+                    last_node, "trigger" if last_node == event_node else "exit",
                     debug_node, "enter"
                 )
                 connections.append(conn)
@@ -471,7 +781,10 @@ class VisualScriptingGenerator:
                     is_control=False
                 )
                 connections.append(conn)
+            
+            last_node = debug_node
 
+        # Process if statements
         if_pattern = r'if\s*\(([^)]+)\)'
         for match in re.finditer(if_pattern, body):
             condition = match.group(1).strip()
@@ -479,13 +792,33 @@ class VisualScriptingGenerator:
             if_node = self._create_if_node()
             nodes.append(if_node)
 
-            if event_node:
+            if last_node:
                 conn = self._create_connection(
-                    event_node, "trigger",
+                    last_node, "trigger" if last_node == event_node else "exit",
                     if_node, "enter"
                 )
                 connections.append(conn)
+            
+            # Parse and create comparison node if needed
+            comparison_ops = ['<=', '>=', '==', '!=', '<', '>']
+            for op in comparison_ops:
+                if op in condition:
+                    parts = condition.split(op, 1)
+                    if len(parts) == 2:
+                        comp_node = self._create_comparison_node(op)
+                        nodes.append(comp_node)
+                        
+                        conn = self._create_connection(
+                            comp_node, "result",
+                            if_node, "%condition",
+                            is_control=False
+                        )
+                        connections.append(conn)
+                    break
+            
+            last_node = if_node
 
+        # Process variable assignments
         assignment_pattern = r'(\w+)\s*=\s*([^;]+);'
         for match in re.finditer(assignment_pattern, body):
             var_name = match.group(1)
@@ -494,14 +827,131 @@ class VisualScriptingGenerator:
             set_var_node = self._create_set_variable_node(var_name, "System.Object")
             nodes.append(set_var_node)
 
-            if event_node:
+            if last_node:
                 conn = self._create_connection(
-                    event_node, "trigger",
+                    last_node, "trigger" if last_node == event_node else "exit",
                     set_var_node, "enter"
                 )
                 connections.append(conn)
+            
+            # Check for arithmetic operations in the value
+            arithmetic_ops = ['+', '-', '*', '/', '%']
+            for op in arithmetic_ops:
+                if op in var_value and not var_value.startswith('"'):
+                    parts = var_value.split(op, 1)
+                    if len(parts) == 2:
+                        arith_node = self._create_arithmetic_node(op)
+                        nodes.append(arith_node)
+                        
+                        conn = self._create_connection(
+                            arith_node, "result",
+                            set_var_node, "%input",
+                            is_control=False
+                        )
+                        connections.append(conn)
+                    break
+            
+            last_node = set_var_node
+
+        # Process yield return statements (for coroutines)
+        yield_pattern = r'yield\s+return\s+(?:new\s+)?(\w+)\s*(?:\(([^)]*)\))?'
+        for match in re.finditer(yield_pattern, body):
+            yield_type = match.group(1)
+            yield_args = match.group(2)
+            
+            yield_node = self._create_yield_return_node()
+            nodes.append(yield_node)
+            
+            if last_node:
+                conn = self._create_connection(
+                    last_node, "trigger" if last_node == event_node else "exit",
+                    yield_node, "enter"
+                )
+                connections.append(conn)
+            
+            # Handle WaitForSeconds
+            if yield_type == "WaitForSeconds" and yield_args:
+                try:
+                    seconds = float(yield_args.strip())
+                    wait_node = self._create_wait_for_seconds_node(seconds)
+                    nodes.append(wait_node)
+                    
+                    conn = self._create_connection(
+                        wait_node, "result",
+                        yield_node, "%instruction",
+                        is_control=False
+                    )
+                    connections.append(conn)
+                except ValueError:
+                    pass
+            
+            last_node = yield_node
+
+        # Process custom method calls (not Debug.Log)
+        method_call_pattern = r'(\w+)\.(\w+)\s*\(([^)]*)\)'
+        for match in re.finditer(method_call_pattern, body):
+            target_obj = match.group(1)
+            method_name = match.group(2)
+            args_str = match.group(3).strip()
+            
+            # Skip Debug.Log as it's already handled
+            if target_obj == "Debug" and method_name == "Log":
+                continue
+            
+            # Skip if this is part of a variable declaration or assignment
+            pre_context = body[max(0, match.start() - 20):match.start()]
+            if '=' in pre_context.split('\n')[-1]:
+                continue
+            
+            # Determine target type
+            target_type = f"UnityEngine.{target_obj}" if target_obj in ["GameObject", "Transform", "Rigidbody"] else target_obj
+            
+            # Parse arguments
+            parameters = []
+            if args_str:
+                # Simple parsing - just count arguments for now
+                arg_count = len([a.strip() for a in args_str.split(',') if a.strip()])
+                for i in range(arg_count):
+                    parameters.append({"type": "System.Object", "name": f"arg{i}"})
+            
+            custom_node = self._create_custom_invoke_node(
+                method_name,
+                target_type,
+                parameters,
+                return_type="void",
+                is_static=False
+            )
+            nodes.append(custom_node)
+            
+            if last_node:
+                conn = self._create_connection(
+                    last_node, "trigger" if last_node == event_node else "exit",
+                    custom_node, "enter"
+                )
+                connections.append(conn)
+            
+            last_node = custom_node
+
+        # Add method comment as description to first node if available
+        if method.get("comments") and nodes:
+            if event_node:
+                event_node.description = method["comments"]
 
         return nodes, connections
+
+    def _extract_switch_body(self, code: str, start_pos: int) -> str:
+        """Extract the body of a switch statement"""
+        depth = 0
+        end_pos = start_pos
+        for i, char in enumerate(code[start_pos:]):
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end_pos = start_pos + i
+                    break
+        return code[start_pos:end_pos]
 
 
 class CS_to_VisualScripting_Converter:

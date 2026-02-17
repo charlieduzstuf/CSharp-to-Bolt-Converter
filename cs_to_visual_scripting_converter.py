@@ -287,18 +287,33 @@ class VisualScriptingGenerator:
         self.variables: List[Variable] = []
         self._position_x = 0
         self._position_y = 0
+        self._node_width = 200
+        self._node_height = 100
+        self._horizontal_spacing = 300
+        self._vertical_spacing = 150
+        self._column = 0
+        self._row = 0
 
     def _new_guid(self) -> str:
         return str(uuid.uuid4())
 
-    def _next_position(self) -> Tuple[float, float]:
-        x = self._position_x
-        y = self._position_y
-        self._position_x += 250
-        if self._position_x > 1000:
-            self._position_x = 0
-            self._position_y += 150
+    def _next_position(self, indent_level: int = 0) -> Tuple[float, float]:
+        """Calculate next node position with improved layout"""
+        x = self._column * self._horizontal_spacing + (indent_level * 100)
+        y = self._row * self._vertical_spacing
+        
+        # Move to next position
+        self._row += 1
+        if self._row > 6:  # Max rows per column
+            self._row = 0
+            self._column += 1
+        
         return (x, y)
+
+    def _reset_position(self):
+        """Reset position for new method"""
+        self._column += 2  # Add space between methods
+        self._row = 0
 
     def _create_event_node(self, event_name: str) -> Node:
         event_type = self.UNITY_EVENTS.get(event_name, "Unity.VisualScripting.Start")
@@ -609,6 +624,7 @@ class VisualScriptingGenerator:
             method_nodes, method_connections = self._process_method(method)
             self.nodes.extend(method_nodes)
             self.connections.extend(method_connections)
+            self._reset_position()  # Add spacing between methods
 
         for node in self.nodes:
             elements.append(node.to_dict())
@@ -644,6 +660,117 @@ class VisualScriptingGenerator:
         }
 
         return graph
+
+    def generate_state_graph(self) -> Dict:
+        """Generate a State Graph instead of a Script Graph"""
+        elements = []
+        states = []
+
+        # Create states from methods
+        for i, method in enumerate(self.parser.methods):
+            state_id = str(i + 1)
+            
+            # Create state node
+            state = {
+                "guid": self._new_guid(),
+                "$type": "Unity.VisualScripting.State",
+                "$version": "A",
+                "$id": state_id,
+                "position": {
+                    "x": i * 400,
+                    "y": 0
+                },
+                "width": 200,
+                "nest": {
+                    "source": "Embed",
+                    "macro": None,
+                    "embed": {
+                        "variables": {
+                            "Kind": "Flow",
+                            "collection": {"$content": [], "$version": "A"},
+                            "$version": "A"
+                        },
+                        "controlInputDefinitions": [],
+                        "controlOutputDefinitions": [],
+                        "valueInputDefinitions": [],
+                        "valueOutputDefinitions": [],
+                        "title": method["name"],
+                        "summary": method.get("comments", f"State for {method['name']}"),
+                        "pan": {"x": 0.0, "y": 0.0},
+                        "zoom": 1.0,
+                        "elements": [],
+                        "$version": "A"
+                    }
+                },
+                "defaultValues": {},
+                "isStart": (i == 0)  # First method is start state
+            }
+            
+            elements.append(state)
+            states.append(state_id)
+
+        # Create transitions between states (simplified)
+        for i in range(len(states) - 1):
+            transition = {
+                "guid": self._new_guid(),
+                "$type": "Unity.VisualScripting.FlowStateTransition",
+                "$version": "A",
+                "$id": str(len(elements) + 1),
+                "source": {"$ref": states[i]},
+                "destination": {"$ref": states[i + 1]},
+                "nest": {
+                    "source": "Embed",
+                    "macro": None,
+                    "embed": {
+                        "variables": {
+                            "Kind": "Flow",
+                            "collection": {"$content": [], "$version": "A"},
+                            "$version": "A"
+                        },
+                        "controlInputDefinitions": [],
+                        "controlOutputDefinitions": [],
+                        "valueInputDefinitions": [],
+                        "valueOutputDefinitions": [],
+                        "title": None,
+                        "summary": None,
+                        "pan": {"x": 0.0, "y": 0.0},
+                        "zoom": 1.0,
+                        "elements": [],
+                        "$version": "A"
+                    }
+                },
+                "defaultValues": {}
+            }
+            elements.append(transition)
+
+        state_graph = {
+            "nest": {
+                "source": "Embed",
+                "macro": None,
+                "embed": {
+                    "variables": {
+                        "Kind": "Flow",
+                        "collection": {
+                            "$content": [],
+                            "$version": "A"
+                        },
+                        "$version": "A"
+                    },
+                    "controlInputDefinitions": [],
+                    "controlOutputDefinitions": [],
+                    "valueInputDefinitions": [],
+                    "valueOutputDefinitions": [],
+                    "title": self.parser.class_name or "ConvertedStateGraph",
+                    "summary": f"State Graph converted from {self.parser.class_name}.cs" if self.parser.class_name else "Converted State Graph",
+                    "pan": {"x": 0.0, "y": 0.0},
+                    "zoom": 1.0,
+                    "elements": elements,
+                    "$version": "A"
+                }
+            }
+        }
+
+        return state_graph
 
     def _process_method(self, method: Dict) -> Tuple[List[Node], List[Connection]]:
         nodes = []
@@ -957,14 +1084,26 @@ class VisualScriptingGenerator:
 class CS_to_VisualScripting_Converter:
     """Main converter class"""
 
-    def __init__(self):
+    def __init__(self, graph_type: str = "script"):
+        """
+        Initialize converter
+        
+        Args:
+            graph_type: Type of graph to generate - "script" for Script Graph or "state" for State Graph
+        """
         self.parser = None
         self.generator = None
+        self.graph_type = graph_type.lower()
 
     def convert(self, cs_code: str) -> str:
         self.parser = CSharpParser(cs_code)
         self.generator = VisualScriptingGenerator(self.parser)
-        graph = self.generator.generate_graph()
+        
+        if self.graph_type == "state":
+            graph = self.generator.generate_state_graph()
+        else:
+            graph = self.generator.generate_graph()
+            
         return json.dumps(graph, indent=4)
 
     def convert_file(self, input_path: str, output_path: str):
@@ -1013,10 +1152,12 @@ def main():
     parser.add_argument('input', help='Input C# file or directory')
     parser.add_argument('-o', '--output', help='Output directory (default: same as input)')
     parser.add_argument('-r', '--recursive', action='store_true', help='Process directories recursively')
+    parser.add_argument('-t', '--type', choices=['script', 'state'], default='script',
+                       help='Graph type: script (default) for Script Graphs, state for State Graphs')
 
     args = parser.parse_args()
 
-    converter = CS_to_VisualScripting_Converter()
+    converter = CS_to_VisualScripting_Converter(graph_type=args.type)
 
     input_path = Path(args.input)
     output_dir = Path(args.output) if args.output else input_path.parent

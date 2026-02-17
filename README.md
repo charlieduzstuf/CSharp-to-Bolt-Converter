@@ -16,12 +16,30 @@ This converter transforms Unity C# code into Visual Scripting graphs by:
 
 | C# Construct | Visual Scripting Node |
 |--------------|----------------------|
+| **Lifecycle Methods** | |
 | `Start()`, `Update()`, `Awake()`, etc. | Event Units (Unity.VisualScripting.Start, etc.) |
+| **Logging** | |
 | `Debug.Log()` | InvokeMember (UnityEngine.Debug.Log) |
+| **Control Flow** | |
 | `if` statements | If Unit (Unity.VisualScripting.If) |
+| `for` loops | For Unit (Unity.VisualScripting.For) |
+| `while` loops | While Unit (Unity.VisualScripting.While) |
+| `foreach` loops | ForEach Unit (Unity.VisualScripting.ForEach) |
+| `switch` statements | SwitchOnInteger Unit |
+| **Operators** | |
+| Arithmetic (`+`, `-`, `*`, `/`, `%`) | Generic arithmetic operators |
+| Comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`) | Generic comparison operators |
+| **Variables** | |
 | Variable assignments | SetVariable Unit |
-| String literals | Literal Unit |
-| Method calls | InvokeMember Unit |
+| Variable reads | GetVariable Unit |
+| **Methods** | |
+| Custom method calls | InvokeMember Unit |
+| **Coroutines** | |
+| `IEnumerator` methods | Coroutine support |
+| `yield return` statements | YieldReturn Unit |
+| `WaitForSeconds()` | WaitForSeconds Unit |
+| **Comments** | |
+| Method comments (`//`, `/* */`) | Preserved as node descriptions |
 
 ### Supported Unity Events
 - `Start` → `Unity.VisualScripting.Start`
@@ -75,10 +93,20 @@ python cs_to_visual_scripting_converter.py ./Scripts/
 python cs_to_visual_scripting_converter.py ./Scripts/ -r
 ```
 
+### Generate State Graph Instead of Script Graph
+
+```bash
+# Convert to State Graph
+python cs_to_visual_scripting_converter.py MyScript.cs -t state
+
+# State Graphs are useful for AI/FSM-style logic
+# Each method becomes a state with transitions
+```
+
 ### Command Line Options
 
 ```
-usage: cs_to_visual_scripting_converter.py [-h] [-o OUTPUT] [-r] input
+usage: cs_to_visual_scripting_converter.py [-h] [-o OUTPUT] [-r] [-t {script,state}] input
 
 Convert Unity C# Scripts to Visual Scripting Graphs
 
@@ -90,6 +118,8 @@ optional arguments:
   -o OUTPUT, --output OUTPUT
                         Output directory (default: same as input)
   -r, --recursive       Process directories recursively
+  -t {script,state}, --type {script,state}
+                        Graph type: script (default) for Script Graphs, state for State Graphs
 ```
 
 ## Example
@@ -98,12 +128,14 @@ optional arguments:
 
 ```csharp
 using UnityEngine;
+using System.Collections;
 
 public class PlayerController : MonoBehaviour
 {
     public float speed = 5.0f;
     public int health = 100;
     
+    // Initialize player on start
     void Start()
     {
         Debug.Log("Player initialized!");
@@ -114,10 +146,25 @@ public class PlayerController : MonoBehaviour
     {
         Debug.Log("Updating player...");
         
+        // Check if player is dead
         if (health <= 0)
         {
             Debug.Log("Player died!");
         }
+        
+        // Loop through actions
+        for (int i = 0; i < 10; i++)
+        {
+            Debug.Log("Action iteration");
+        }
+    }
+    
+    // Coroutine example
+    IEnumerator DelayedAction()
+    {
+        Debug.Log("Starting delayed action");
+        yield return new WaitForSeconds(2.0f);
+        Debug.Log("Action complete");
     }
 }
 ```
@@ -125,13 +172,16 @@ public class PlayerController : MonoBehaviour
 ### Output Visual Scripting Graph
 
 The converter generates a `.asset` file with:
-- **Start Event** node connected to Debug.Log("Player initialized!")
+- **Start Event** node connected to Debug.Log("Player initialized!") with comment as description
 - **Update Event** node connected to:
   - Debug.Log("Updating player...")
-  - If node checking health <= 0
+  - If node checking health <= 0 with comparison operator
   - Debug.Log("Player died!") in the if branch
+  - For loop node with iterations
+- **Coroutine Support** with yield return and WaitForSeconds nodes
 - **SetVariable** node for health assignment
 - All proper **ControlConnections** (flow) and **ValueConnections** (data)
+- **Improved layout** with better node positioning
 
 ## Visual Scripting Format
 
@@ -209,22 +259,21 @@ MonoBehaviour:
 
 Current version has the following limitations:
 
-1. **Simplified Control Flow**: Complex nested if/else, loops, and switch statements require manual refinement
-2. **Limited Method Support**: Only Debug.Log is fully supported; other methods need manual configuration
-3. **No Generic Types**: Generic method/type support is limited
-4. **No Custom Classes**: Custom class references need manual handling
-5. **No Comments**: C# comments are not preserved in the graph
+1. **Complex Nested Logic**: Deeply nested control flow may need manual refinement
+2. **Generic Types**: Limited support for generic types
+3. **Custom Classes**: Custom class references may need manual handling  
+4. **Advanced C# Features**: Some newer C# features (pattern matching, records, etc.) are not yet supported
+5. **Expression Bodies**: Lambda expressions and expression-bodied members have limited support
 
 ## Future Enhancements
 
-- [ ] Support for loops (for, while, foreach)
-- [ ] Support for switch statements
-- [ ] Better handling of arithmetic operations
-- [ ] Support for coroutines (IEnumerator)
-- [ ] Support for custom method calls
-- [ ] Preservation of comments as node descriptions
-- [ ] Better layout algorithms for node positioning
-- [ ] Support for State Graphs (in addition to Script Graphs)
+Planned improvements:
+
+- [ ] Enhanced support for lambda expressions and LINQ
+- [ ] Better handling of properties and getters/setters  
+- [ ] Support for events and delegates
+- [ ] Improved error handling and validation
+- [ ] GUI tool for conversion
 
 ## Technical Details
 
